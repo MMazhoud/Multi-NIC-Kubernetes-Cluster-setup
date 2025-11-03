@@ -1,0 +1,372 @@
+###########################################
+# KUBERNETES CLUSTER TOPOLOGY (INITIAL)
+# -----------------------------------------
+# 1 Control Plane Node
+# 2 Worker Nodes
+# Flannel as default CNI
+# Multiple network interfaces:
+#   - ens160 : OOB (Management / SSH / bootstrap) --  (all nodes)
+#   - ens192 : External (LoadBalancer / Internet / client access) -- (all nodes)
+#   - ens224 : API Internal (Control plane communication / etcd) -- (all nodes)
+#   - ens256 : UNDERLAY (Inter-pod overlay encapsulated traffic) -- (worker only)
+#
+# IP Plan & Hostnames:
+# ------------------------------------------------------------------------------------------------------------
+# | Role     | Hostname        | ens160 (OBB)     | ens192 (External) | ens224 (API)     | ens256 (UNDERLAY) |
+# |----------|-----------------|------------------|-------------------|------------------|-------------------|
+# | Control  | master-01       | 172.16.101.41    | 172.16.103.41     | 10.10.11.41      | N/A               |
+# | Worker   | worker-01       | 172.16.101.51    | 172.16.103.51     | 10.10.11.51      | 10.10.10.51       |
+# | Worker   | worker-02       | 172.16.101.52    | 172.16.103.52     | 10.10.11.52      | 10.10.10.52       |
+# ------------------------------------------------------------------------------------------------------------
+# Horizontal layout : 
+#
+#              +---------------------------------------------------+
+#              |            External Clients / kubectl             |
+#              +---------------------------------------------------+
+#                           |                |              |
+#                           |                |              |
+#             172.16.103.41 |  172.16.103.51 |  172.16.103.52
+#                   +-------+-------+-------+-------+-------+
+#                   | master-01    | worker-01    | worker-02
+#                   | CONTROL NODE | WORKER NODE  | WORKER NODE
+#                   +-------------+-------------+-------------+
+#                   | eth0: OOB   | eth0: OOB   | eth0: OOB   |
+#                   | eth1: Ext   | eth1: Ext   | eth1: Ext   |
+#                   | eth2: API   | eth2: API   | eth2: API   |
+#                   |             | eth3: POD   | eth3: POD   |
+#                   +-------------+-------------+-------------+
+#
+# Control Plane:
+# - kube-apiserver listens on ens224 (API Internal). It could be exposed via a service for remote user access. 
+# - etcd runs locally on master-01 (single node etcd)
+#
+# Worker Nodes:
+# - kubelet connects directly to master-01.api:6443 
+# - Pod network (Flannel overlay) on eth3
+#
+###########################################
+
+###########################################
+# used OS
+# -----------------------------------------
+
+$ hostnamectl
+ Static hostname: {hostname}
+       Icon name: computer-vm
+         Chassis: vm
+      Machine ID: {uuid}
+         Boot ID: {bootid}
+  Virtualization: vmware
+Operating System: Ubuntu 22.04.5 LTS
+          Kernel: Linux 5.15.0-160-generic
+    Architecture: x86-64
+ Hardware Vendor: VMware, Inc.
+  Hardware Model: VMware Virtual Platform
+
+###########################################
+# master-01 ip addresses 
+# -----------------------------------------
+
+admink8s@master-01:~$ ip -br -4 a
+lo               UNKNOWN        127.0.0.1/8
+ens160           UP             172.16.101.41/24
+ens192           UP             172.16.103.41/24
+ens224           UP             10.10.11.41/24
+admink8s@master-01:~$
+
+###########################################
+# master-01 ip routing
+# -----------------------------------------
+
+admink8s@master-01:~$ ip route
+default via 172.16.103.254 dev ens192 proto static
+10.10.11.0/24 dev ens224 proto kernel scope link src 10.10.11.41
+172.16.101.0/24 dev ens160 proto kernel scope link src 172.16.101.41
+172.16.103.0/24 dev ens192 proto kernel scope link src 172.16.103.41
+192.168.250.0/24 via 172.16.101.254 dev ens160 proto static <- Jump host network 
+
+###########################################
+# master-01 netplan config 
+# -----------------------------------------
+
+admink8s@master-01:~$ cat /etc/netplan/00-installer-config.yaml
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    ens160:
+      addresses:
+      - 172.16.101.41/24
+      routes:
+      - to: 192.168.250.0/24
+        via: 172.16.101.254
+    ens192:
+      addresses:
+      - 172.16.103.41/24
+      nameservers:
+        addresses:
+        - 8.8.8.8
+        - 8.8.4.4
+        search: []
+      routes:
+      - to: default
+        via: 172.16.103.254
+    ens224:
+      addresses:
+      - 10.10.11.41/24
+  version: 2
+admink8s@master-01:~$
+
+###########################################
+# master-01 /etc/hosts config 
+# -----------------------------------------
+
+admink8s@master-01:~$ cat /etc/hosts
+127.0.0.1 localhost
+127.0.1.1 master-01
+
+172.16.101.41 master-01.obb
+172.16.103.41 master-01.external
+10.10.11.41 master-01.api
+
+172.16.101.42 master-02.obb
+172.16.103.42 master-02.external
+10.10.11.42 master-02.api
+
+172.16.101.43 master-03.obb
+172.16.103.43 master-03.external
+10.10.11.43 master-03.api
+
+172.16.101.51 worker-01.obb
+172.16.103.51 worker-01.external
+10.10.11.51 worker-01.api
+10.10.10.51 worker-01.pod
+
+172.16.101.52 worker-02.obb
+172.16.103.52 worker-02.external
+10.10.11.52 worker-02.api
+10.10.10.52 worker-02.pod
+
+172.16.101.53 worker-03.obb
+172.16.103.53 worker-03.external
+10.10.11.53 worker-03.api
+10.10.10.53 worker-03.pod
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+admink8s@master-01:~$
+
+###########################################
+# worker-01 ip addresses 
+# -----------------------------------------
+
+admink8s@worker-01:~$ ip -br -4 a
+lo               UNKNOWN        127.0.0.1/8
+ens160           UP             172.16.101.51/24
+ens192           UP             172.16.103.51/24
+ens224           UP             10.10.11.51/24
+ens256           UP             10.10.10.51/24
+admink8s@worker-01:~$
+
+
+###########################################
+# worker-01 ip routing
+# -----------------------------------------
+
+admink8s@worker-01:~$ ip route
+default via 172.16.103.254 dev ens192 proto static
+10.10.10.0/24 dev ens256 proto kernel scope link src 10.10.10.51
+10.10.11.0/24 dev ens224 proto kernel scope link src 10.10.11.51
+172.16.101.0/24 dev ens160 proto kernel scope link src 172.16.101.51
+172.16.103.0/24 dev ens192 proto kernel scope link src 172.16.103.51
+192.168.250.0/24 via 172.16.101.254 dev ens160 proto static
+admink8s@worker-01:~$
+
+
+###########################################
+# worker-01 netplan config 
+# -----------------------------------------
+
+admink8s@worker-01:~$ cat /etc/netplan/00-installer-config.yaml
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    ens160:
+      addresses:
+      - 172.16.101.51/24
+      routes:
+      - to: 192.168.250.0/24
+        via: 172.16.101.254
+    ens192:
+      addresses:
+      - 172.16.103.51/24
+      nameservers:
+        addresses:
+        - 8.8.8.8
+        - 8.8.4.4
+        search: []
+      routes:
+      - to: default
+        via: 172.16.103.254
+    ens224:
+      addresses:
+      - 10.10.11.51/24
+    ens256:
+      addresses:
+      - 10.10.10.51/24
+  version: 2
+admink8s@worker-01:~$
+
+
+###########################################
+# worker-01 /etc/hosts config 
+# -----------------------------------------
+
+admink8s@worker-01:~$ cat /etc/hosts
+127.0.0.1 localhost
+127.0.1.1 worker-01
+
+172.16.101.41 master-01.obb
+172.16.103.41 master-01.external
+10.10.11.41 master-01.api
+
+172.16.101.42 master-02.obb
+172.16.103.42 master-02.external
+10.10.11.42 master-02.api
+
+172.16.101.43 master-03.obb
+172.16.103.43 master-03.external
+10.10.11.43 master-03.api
+
+172.16.101.51 worker-01.obb
+172.16.103.51 worker-01.external
+10.10.11.51 worker-01.api
+10.10.10.51 worker-01.pod
+
+172.16.101.52 worker-02.obb
+172.16.103.52 worker-02.external
+10.10.11.52 worker-02.api
+10.10.10.52 worker-02.pod
+
+172.16.101.53 worker-03.obb
+172.16.103.53 worker-03.external
+10.10.11.53 worker-03.api
+10.10.10.53 worker-03.pod
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+admink8s@worker-01:~$
+
+
+#worker-02 same config as worker-01 
+
+###########################################
+# worker-02 ip addresses 
+# -----------------------------------------
+
+admink8s@worker-02:~$ ip -br -4 a
+lo               UNKNOWN        127.0.0.1/8
+ens160           UP             172.16.101.52/24
+ens192           UP             172.16.103.52/24
+ens224           UP             10.10.11.52/24
+ens256           UP             10.10.10.52/24
+admink8s@worker-02:~$
+
+###########################################
+# worker-02 ip routing
+# -----------------------------------------
+
+admink8s@worker-02:~$ ip route
+default via 172.16.103.254 dev ens192 proto static
+10.10.10.0/24 dev ens256 proto kernel scope link src 10.10.10.52
+10.10.11.0/24 dev ens224 proto kernel scope link src 10.10.11.52
+172.16.101.0/24 dev ens160 proto kernel scope link src 172.16.101.52
+172.16.103.0/24 dev ens192 proto kernel scope link src 172.16.103.52
+192.168.250.0/24 via 172.16.101.254 dev ens160 proto static
+admink8s@worker-02:~$
+
+###########################################
+# worker-02 netplan config 
+# -----------------------------------------
+
+admink8s@worker-02:~$ cat /etc/netplan/00-installer-config.yaml
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    ens160:
+      addresses:
+      - 172.16.101.52/24
+      routes:
+      - to: 192.168.250.0/24
+        via: 172.16.101.254
+    ens192:
+      addresses:
+      - 172.16.103.52/24
+      nameservers:
+        addresses:
+        - 8.8.8.8
+        - 8.8.4.4
+        search: []
+      routes:
+      - to: default
+        via: 172.16.103.254
+    ens224:
+      addresses:
+      - 10.10.11.52/24
+    ens256:
+      addresses:
+      - 10.10.10.52/24
+  version: 2
+admink8s@worker-02:~$
+
+###########################################
+# worker-02 /etc/hosts config 
+# -----------------------------------------
+
+admink8s@worker-02:~$ cat /etc/hosts
+127.0.0.1 localhost
+127.0.1.1 worker-02
+
+172.16.101.41 master-01.obb
+172.16.103.41 master-01.external
+10.10.11.41 master-01.api
+
+172.16.101.42 master-02.obb
+172.16.103.42 master-02.external
+10.10.11.42 master-02.api
+
+172.16.101.43 master-03.obb
+172.16.103.43 master-03.external
+10.10.11.43 master-03.api
+
+172.16.101.51 worker-01.obb
+172.16.103.51 worker-01.external
+10.10.11.51 worker-01.api
+10.10.10.51 worker-01.pod
+
+172.16.101.52 worker-02.obb
+172.16.103.52 worker-02.external
+10.10.11.52 worker-02.api
+10.10.10.52 worker-02.pod
+
+172.16.101.53 worker-03.obb
+172.16.103.53 worker-03.external
+10.10.11.53 worker-03.api
+10.10.10.53 worker-03.pod
+
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+admink8s@worker-02:~$
+
+
