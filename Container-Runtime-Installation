@@ -1,0 +1,312 @@
+##############################################################################################
+###   Container Runtime Installation on All Nodes                                          ###
+##############################################################################################
+### - The container runtime (CRI) of choice for this PoC is **Docker Engine** with **cri-dockerd**.
+### - Starting with **Kubernetes v1.24**, Docker Engine is **no longer directly integrated**
+###   with Kubernetes.
+###
+### - **cri-dockerd** is not a container runtime itself — it is an adapter that allows
+###   Kubernetes to communicate with Docker Engine through the **Container Runtime Interface (CRI)**.
+###
+### - Control plane components (such as kube-apiserver, etcd, kube-scheduler, and
+###   kube-controller-manager) are deployed as **static pods** on the control-plane node.
+###
+### - These static pods require a container runtime to operate, so **Docker Engine must be installed**
+###   on every node that runs Kubernetes components — including the control-plane nodes.
+###
+### Installation guide: https://docs.docker.com/engine/install/ubuntu/
+##############################################################################################
+
+
+################################################
+# step 1 : uninstall all conflicting packages
+# ----------------------------------------------
+
+$ for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
+
+################################################
+# step 2 : Install using the apt repository
+# ----------------------------------------------
+
+# Add Docker's official GPG key:
+$ sudo apt-get update
+$ sudo apt-get install ca-certificates curl
+$ sudo install -m 0755 -d /etc/apt/keyrings
+$ sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+$ sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add the repository to Apt sources:
+$ echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+$ sudo apt-get update
+
+
+#install latest version 
+$ sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+#verify installation 
+
+$ sudo systemctl status docker
+
+#if needed 
+
+$ sudo systemctl start docker
+
+#display docker version 
+
+$ docker version
+Client: Docker Engine - Community
+ Version:           28.5.1
+ API version:       1.51
+ Go version:        go1.24.8
+ Git commit:        e180ab8
+ Built:             Wed Oct  8 12:17:03 2025
+ OS/Arch:           linux/amd64
+ Context:           default
+permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.51/version": dial unix /var/run/docker.sock: connect: permission denied
+$
+
+
+$ docker version
+Client: Docker Engine - Community
+ Version:           28.5.1
+ API version:       1.51
+ Go version:        go1.24.8
+ Git commit:        e180ab8
+ Built:             Wed Oct  8 12:17:03 2025
+ OS/Arch:           linux/amd64
+ Context:           default
+permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.51/version": dial unix /var/run/docker.sock: connect: permission denied
+$
+
+#run first docker image 
+
+$ sudo docker run hello-world
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+17eec7bbc9d7: Pull complete
+Digest: sha256:6dc565aa630927052111f823c303948cf83670a3903ffa3849f1488ab517f891
+Status: Downloaded newer image for hello-world:latest
+
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+
+To generate this message, Docker took the following steps:
+ 1. The Docker client contacted the Docker daemon.
+ 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    (amd64)
+ 3. The Docker daemon created a new container from that image which runs the
+    executable that produces the output you are currently reading.
+ 4. The Docker daemon streamed that output to the Docker client, which sent it
+    to your terminal.
+
+To try something more ambitious, you can run an Ubuntu container with:
+ $ docker run -it ubuntu bash
+
+Share images, automate workflows, and more with a free Docker ID:
+ https://hub.docker.com/
+
+For more examples and ideas, visit:
+ https://docs.docker.com/get-started/
+
+$
+
+
+
+################################################
+# step 3 : Linux post-installation steps for Docker Engine
+# ----------------------------------------------
+
+#check the docker group 
+$ cat /etc/group | grep docker
+docker:x:999:
+$
+
+#if not present, create one with $ sudo groupadd docker
+
+# add local user to that group 
+$ sudo usermod -aG docker $USER
+
+#activate new changes
+$ newgrp docker
+
+#test helloworld without sudo
+$ docker run hello-world
+
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+
+To generate this message, Docker took the following steps:
+ 1. The Docker client contacted the Docker daemon.
+ 2. The Docker daemon pulled the "hello-world" image from the Docker Hub.
+    (amd64)
+ 3. The Docker daemon created a new container from that image which runs the
+    executable that produces the output you are currently reading.
+ 4. The Docker daemon streamed that output to the Docker client, which sent it
+    to your terminal.
+
+To try something more ambitious, you can run an Ubuntu container with:
+ $ docker run -it ubuntu bash
+
+Share images, automate workflows, and more with a free Docker ID:
+ https://hub.docker.com/
+
+For more examples and ideas, visit:
+ https://docs.docker.com/get-started/
+
+##############################################################################################
+### cri-dockerd installation on all nodes                                                  ###
+### follwing https://mirantis.github.io/cri-dockerd/usage/install-manually/                ###
+##############################################################################################
+
+################################################
+# step 4 : download binary package
+# ----------------------------------------------
+
+
+$ wget https://github.com/Mirantis/cri-dockerd/releases/download/v0.3.20/cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb
+--2025-10-20 19:41:10--  https://github.com/Mirantis/cri-dockerd/releases/download/v0.3.20/cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb
+Resolving github.com (github.com)... 140.82.121.4
+Connecting to github.com (github.com)|140.82.121.4|:443... connected.
+<--snap-->...
+
+cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.de 100%[==============================================================================================>]  11.23M  2.20MB/s    in 5.0s
+
+2025-10-20 19:41:16 (2.23 MB/s) - ‘cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb’ saved [11771066/11771066]
+
+$ ls
+cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb
+
+################################################
+# step 5 : install package
+# ----------------------------------------------
+
+ 
+$ sudo apt install ./cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb -y
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+Note, selecting 'cri-dockerd' instead of './cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb'
+The following additional packages will be installed:
+  cgroupfs-mount libltdl7
+Recommended packages:
+  aufs-tools
+The following NEW packages will be installed:
+  cgroupfs-mount cri-dockerd libltdl7
+0 upgraded, 3 newly installed, 0 to remove and 9 not upgraded.
+Need to get 45.9 kB/11.8 MB of archives.
+After this operation, 51.6 MB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu jammy/universe amd64 cgroupfs-mount all 1.4 [6,320 B]
+Get:2 http://archive.ubuntu.com/ubuntu jammy/main amd64 libltdl7 amd64 2.4.6-15build2 [39.6 kB]
+Get:3 /home/admink8s/cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb cri-dockerd amd64 0:0.3.20~3-0~ubuntu-jammy [11.8 MB]
+Fetched 45.9 kB in 0s (211 kB/s)
+Selecting previously unselected package cgroupfs-mount.
+(Reading database ... 75827 files and directories currently installed.)
+Preparing to unpack .../cgroupfs-mount_1.4_all.deb ...
+Unpacking cgroupfs-mount (1.4) ...
+Selecting previously unselected package cri-dockerd.
+Preparing to unpack .../cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb ...
+Unpacking cri-dockerd (0.3.20~3-0~ubuntu-jammy) ...
+Selecting previously unselected package libltdl7:amd64.
+Preparing to unpack .../libltdl7_2.4.6-15build2_amd64.deb ...
+Unpacking libltdl7:amd64 (2.4.6-15build2) ...
+Setting up libltdl7:amd64 (2.4.6-15build2) ...
+Setting up cgroupfs-mount (1.4) ...
+Setting up cri-dockerd (0.3.20~3-0~ubuntu-jammy) ...
+Created symlink /etc/systemd/system/multi-user.target.wants/cri-docker.service → /lib/systemd/system/cri-docker.service.
+Created symlink /etc/systemd/system/sockets.target.wants/cri-docker.socket → /lib/systemd/system/cri-docker.socket.
+Processing triggers for man-db (2.10.2-1) ...
+Processing triggers for libc-bin (2.35-0ubuntu3.11) ...
+Scanning processes...
+Scanning linux images...
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+N: Download is performed unsandboxed as root as file '/home/admink8s/cri-dockerd_0.3.20.3-0.ubuntu-jammy_amd64.deb' couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
+
+
+
+################################################
+# step 6 : enable/start cri-docker socket
+# ----------------------------------------------
+
+$ sudo systemctl daemon-reload
+$ sudo systemctl enable cri-docker.service
+$ sudo systemctl enable cri-docker.socket
+$ sudo systemctl start cri-docker.service
+$ sudo systemctl status cri-docker.service
+● cri-docker.service - CRI Interface for Docker Application Container Engine
+     Loaded: loaded (/lib/systemd/system/cri-docker.service; enabled; vendor preset: enabled)
+     Active: active (running) since Mon 2025-10-20 19:44:36 UTC; 5min ago
+TriggeredBy: ● cri-docker.socket
+       Docs: https://docs.mirantis.com
+   Main PID: 6649 (cri-dockerd)
+      Tasks: 12
+     Memory: 9.8M
+        CPU: 181ms
+     CGroup: /system.slice/cri-docker.service
+             └─6649 /usr/bin/cri-dockerd --container-runtime-endpoint fd://
+
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Hairpin mode is set to none"
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="The binary conntrack is not installed, this can cause failures in network connection clean>
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="The binary conntrack is not installed, this can cause failures in network connection clean>
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Loaded network plugin cni"
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Docker cri networking managed by network plugin cni"
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Setting cgroupDriver systemd"
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Docker cri received runtime config &RuntimeConfig{NetworkConfig:&NetworkConfig{PodCidr:,},>
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Starting the GRPC backend for the Docker CRI interface."
+Oct 20 19:44:36 worker-01 cri-dockerd[6649]: time="2025-10-20T19:44:36Z" level=info msg="Start cri-dockerd grpc backend"
+Oct 20 19:44:36 worker-01 systemd[1]: Started CRI Interface for Docker Application Container Engine.
+
+$ sudo systemctl status cri-docker.socket
+● cri-docker.socket - CRI Docker Socket for the API
+     Loaded: loaded (/lib/systemd/system/cri-docker.socket; enabled; vendor preset: enabled)
+     Active: active (running) since Mon 2025-10-20 19:44:35 UTC; 5min ago
+   Triggers: ● cri-docker.service
+     Listen: /run/cri-dockerd.sock (Stream)
+      Tasks: 0 (limit: 9387)
+     Memory: 0B
+        CPU: 1ms
+     CGroup: /system.slice/cri-docker.socket
+
+Oct 20 19:44:35 worker-01 systemd[1]: Starting CRI Docker Socket for the API...
+Oct 20 19:44:35 worker-01 systemd[1]: Listening on CRI Docker Socket for the API.
+
+################################################
+# step 7 : checks
+# ----------------------------------------------
+
+$ ls -l /var/run/cri-dockerd.sock
+srw-rw---- 1 root docker 0 Oct 20 19:44 /var/run/cri-dockerd.sock
+
+$ systemctl cat cri-docker.socket
+# /lib/systemd/system/cri-docker.socket
+[Unit]
+Description=CRI Docker Socket for the API
+PartOf=cri-docker.service
+
+[Socket]
+ListenStream=%t/cri-dockerd.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=docker
+
+[Install]
+WantedBy=sockets.target
+
+$ sudo ss -lx | grep cri-dockerd
+u_str LISTEN 0      4096                          /run/cri-dockerd.sock 430099            * 0
+
+
+
+
